@@ -83,15 +83,40 @@ class App(ctk.CTk):
         self.initialize_connections()
 
     def setup_main_ui(self):
-        self.grid_columnconfigure(0, weight=1, minsize=200)
+        self.grid_columnconfigure(0, weight=1, minsize=250)
         self.grid_columnconfigure(1, weight=3)
         self.grid_rowconfigure(0, weight=1)
-        left_frame = ctk.CTkFrame(self, width=200)
+
+        left_frame = ctk.CTkFrame(self, width=250)
         left_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         left_frame.grid_rowconfigure(1, weight=1)
+
         ctk.CTkLabel(left_frame, text="Contatos", font=ctk.CTkFont(size=16, weight="bold")).grid(row=0, column=0, padx=10, pady=10)
         self.contacts_frame = ctk.CTkScrollableFrame(left_frame)
         self.contacts_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
+
+        profile_frame = ctk.CTkFrame(left_frame)
+        profile_frame.grid(row=2, column=0, padx=10, pady=10, sticky="ew")
+        
+        ctk.CTkLabel(profile_frame, text="Meu Perfil", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=(5,10))
+        
+        ctk.CTkLabel(profile_frame, text="Latitude:").pack(anchor="w", padx=10)
+        self.lat_entry_edit = ctk.CTkEntry(profile_frame)
+        self.lat_entry_edit.pack(fill="x", padx=10, pady=(0,5))
+        self.lat_entry_edit.insert(0, str(self.lat))
+
+        ctk.CTkLabel(profile_frame, text="Longitude:").pack(anchor="w", padx=10)
+        self.lon_entry_edit = ctk.CTkEntry(profile_frame)
+        self.lon_entry_edit.pack(fill="x", padx=10, pady=(0,5))
+        self.lon_entry_edit.insert(0, str(self.lon))
+
+        ctk.CTkLabel(profile_frame, text="Raio (km):").pack(anchor="w", padx=10)
+        self.raio_entry_edit = ctk.CTkEntry(profile_frame)
+        self.raio_entry_edit.pack(fill="x", padx=10, pady=(0,10))
+        self.raio_entry_edit.insert(0, str(self.raio))
+
+        ctk.CTkButton(profile_frame, text="Atualizar Perfil", command=self._update_profile).pack(fill="x", padx=10, pady=(0,10))
+
         right_frame = ctk.CTkFrame(self)
         right_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
         right_frame.grid_rowconfigure(0, weight=1)
@@ -107,16 +132,22 @@ class App(ctk.CTk):
         self.send_button.grid(row=2, column=1, padx=(5, 10), pady=10, sticky="e")
         self._update_contacts_list()
 
-    def _create_contact_item(self, parent_frame, username, status):
+    def _create_contact_item(self, parent_frame, username, status, distance=None):
         color = COLOR_ONLINE if status == 'ONLINE' else COLOR_OFFLINE
         item_frame = ctk.CTkFrame(parent_frame, fg_color="transparent", corner_radius=5)
         item_frame.pack(fill="x", padx=5, pady=3)
+        item_frame.grid_columnconfigure(1, weight=1)
 
         dot_label = ctk.CTkLabel(item_frame, text="●", text_color=color, font=ctk.CTkFont(size=18), fg_color="transparent")
-        dot_label.pack(side="left", padx=(0, 5))
+        dot_label.grid(row=0, column=0, sticky="w")
 
         name_label = ctk.CTkLabel(item_frame, text=username, anchor="w", fg_color="transparent")
-        name_label.pack(side="left", fill="x", expand=True)
+        name_label.grid(row=0, column=1, sticky="w", padx=5)
+
+        if distance is not None:
+            dist_label = ctk.CTkLabel(item_frame, text=f"({distance:.2f} km)", anchor="e", font=ctk.CTkFont(size=10), text_color="gray", fg_color="transparent")
+            dist_label.grid(row=0, column=2, sticky="e", padx=5)
+            dist_label.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
 
         item_frame.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
         dot_label.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
@@ -125,12 +156,32 @@ class App(ctk.CTk):
     def _select_recipient(self, username, frame):
         if self.selected_contact_frame is not None:
             self.selected_contact_frame.configure(fg_color="transparent")
-        
         frame.configure(fg_color=COLOR_SELECTED_BG)
         self.selected_contact_frame = frame
-    
         self.selected_recipient = username
         self.recipient_label.configure(text=f"Enviando para: {self.selected_recipient}", text_color=COLOR_SELECTED_TEXT)
+
+    def _update_profile(self):
+        new_lat_str = self.lat_entry_edit.get()
+        new_lon_str = self.lon_entry_edit.get()
+        new_raio_str = self.raio_entry_edit.get()
+        try:
+            new_lat = float(new_lat_str)
+            new_lon = float(new_lon_str)
+            new_raio = float(new_raio_str)
+        except ValueError:
+            self.add_log("[ERRO] Falha ao atualizar perfil: valores devem ser numéricos.")
+            return
+
+        self.lat, self.lon, self.raio = new_lat, new_lon, new_raio
+
+        try:
+            self.rpc_proxy.atualizar_localizacao(self.username, self.lat, self.lon)
+            self.rpc_proxy.atualizar_raio(self.username, self.raio)
+            self.add_log("[SISTEMA] Perfil atualizado com sucesso no servidor.")
+            self._update_contacts_list()
+        except Exception as e:
+            self.add_log(f"[ERRO] Falha ao comunicar atualização ao servidor: {e}")
 
     def add_log(self, message):
         self.log_textbox.configure(state="normal")
@@ -159,9 +210,10 @@ class App(ctk.CTk):
             self.add_log(f"[ERRO] Falha ao buscar lista de usuários: {e}")
             return
         
-        self.selected_recipient = None
-        self.selected_contact_frame = None
-        self.recipient_label.configure(text="Selecione um contato para enviar mensagem", text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"])
+        if self.selected_recipient not in all_users_data or all_users_data[self.selected_recipient]['status'] == 'OFFLINE':
+            self.selected_recipient = None
+            self.selected_contact_frame = None
+            self.recipient_label.configure(text="Selecione um contato para enviar mensagem", text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"])
 
         list_of_widgets = list(self.contacts_frame.winfo_children())
         for widget in list_of_widgets:
@@ -169,30 +221,29 @@ class App(ctk.CTk):
 
         online_in_radius, online_out_of_radius, offline_users = {}, {}, {}
         for user, data in all_users_data.items():
-            if user == self.username:
-                continue
+            if user == self.username: continue
             if data['status'] == 'ONLINE':
                 dist = calcular_distancia(self.lat, self.lon, data['lat'], data['lon'])
                 if dist <= self.raio:
-                    online_in_radius[user] = data
+                    online_in_radius[user] = {'data': data, 'dist': dist}
                 else:
-                    online_out_of_radius[user] = data
+                    online_out_of_radius[user] = {'data': data, 'dist': dist}
             else:
-                offline_users[user] = data
+                offline_users[user] = {'data': data}
         
         if online_in_radius:
             ctk.CTkLabel(self.contacts_frame, text=f"Online (Dentro do Raio - {len(online_in_radius)})", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=5, pady=(5,2))
-            for user in sorted(online_in_radius.keys()):
-                self._create_contact_item(self.contacts_frame, user, 'ONLINE')
+            for user, info in sorted(online_in_radius.items()):
+                self._create_contact_item(self.contacts_frame, user, 'ONLINE', info['dist'])
 
         if online_out_of_radius:
             ctk.CTkLabel(self.contacts_frame, text=f"Online (Fora do Raio - {len(online_out_of_radius)})", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=5, pady=(15,2))
-            for user in sorted(online_out_of_radius.keys()):
-                self._create_contact_item(self.contacts_frame, user, 'ONLINE')
+            for user, info in sorted(online_out_of_radius.items()):
+                self._create_contact_item(self.contacts_frame, user, 'ONLINE', info['dist'])
         
         if offline_users:
             ctk.CTkLabel(self.contacts_frame, text=f"Offline ({len(offline_users)})", font=ctk.CTkFont(weight="bold")).pack(anchor="w", padx=5, pady=(15,2))
-            for user in sorted(offline_users.keys()):
+            for user, info in sorted(offline_users.items()):
                 self._create_contact_item(self.contacts_frame, user, 'OFFLINE')
 
     def initialize_connections(self):
