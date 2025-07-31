@@ -28,6 +28,8 @@ class App(ctk.CTk):
         self.selected_recipient = None
         self.selected_contact_frame = None
         self.is_online = True
+        self.default_switch_progress_color = None
+        self.default_switch_fg_color = None
 
         self.title("Comunicador Geográfico - Login")
         self.geometry("400x450")
@@ -36,7 +38,6 @@ class App(ctk.CTk):
         self.mqtt_client = None
         self.is_running = True
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-
         self.create_login_widgets()
 
     def create_login_widgets(self):
@@ -121,6 +122,8 @@ class App(ctk.CTk):
         self.status_switch = ctk.CTkSwitch(profile_frame, text="Status Online", command=self._toggle_status)
         self.status_switch.pack(fill="x", padx=10, pady=10)
         self.status_switch.select()
+        self.default_switch_progress_color = self.status_switch.cget("progress_color")
+        self.default_switch_fg_color = self.status_switch.cget("fg_color")
 
         right_frame = ctk.CTkFrame(self)
         right_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
@@ -161,10 +164,16 @@ class App(ctk.CTk):
         self.selected_contact_frame = frame
         self.selected_recipient = username
         self.recipient_label.configure(text=f"Enviando para: {self.selected_recipient}", text_color=COLOR_SELECTED_TEXT)
-
+        
     def _toggle_status(self):
         self.is_online = not self.is_online
         new_status = 'ONLINE' if self.is_online else 'OFFLINE'
+
+        if self.is_online:
+            self.status_switch.configure(text="Status Online", progress_color=self.default_switch_progress_color, fg_color=self.default_switch_fg_color)
+        else:
+            self.status_switch.configure(text="Status Offline", fg_color=COLOR_OFFLINE)
+
         try:
             self.rpc_proxy.atualizar_status(self.username, new_status)
             self.mqtt_client.publish(MQTT_TOPIC_PRESENCE, f"{self.username}:{new_status}", retain=True)
@@ -172,10 +181,13 @@ class App(ctk.CTk):
             self.add_log(f"[SISTEMA] Seu status foi alterado para {log_msg}.")
         except Exception as e:
             self.add_log(f"[ERRO] Falha ao atualizar status: {e}")
-            if self.is_online: self.status_switch.select()
-            else: self.status_switch.deselect()
             self.is_online = not self.is_online
-
+            if self.is_online:
+                self.status_switch.select()
+                self.status_switch.configure(text="Status Online", progress_color=self.default_switch_progress_color, fg_color=self.default_switch_fg_color)
+            else:
+                self.status_switch.deselect()
+                self.status_switch.configure(text="Status Offline", fg_color=COLOR_OFFLINE)
 
     def _update_profile(self):
         new_lat_str = self.lat_entry_edit.get()
@@ -289,6 +301,9 @@ class App(ctk.CTk):
 
     def poll_rpc_messages(self):
         while self.is_running:
+            if not self.is_online: 
+                time.sleep(2)
+                continue
             try:
                 messages = self.rpc_proxy.receber_mensagens_sincronas(self.username)
                 if messages:
