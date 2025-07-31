@@ -1,9 +1,6 @@
 from math import radians, sin, cos, sqrt, atan2
 
 def calcular_distancia(lat1, lon1, lat2, lon2):
-    """
-    Calcula a distância entre dois pontos geográficos (em km) usando a fórmula de Haversine.
-    """
     R = 6371.0
 
     lat1_rad = radians(lat1)
