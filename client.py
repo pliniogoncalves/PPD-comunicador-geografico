@@ -15,6 +15,8 @@ MQTT_TOPIC_MSG_BASE = 'ppd/projeto/mensagens'
 COLOR_ERROR = "#C21807"
 COLOR_ONLINE = "#1F6AA5"
 COLOR_OFFLINE = "#C21807"
+COLOR_SELECTED_TEXT = "#1F6AA5"
+COLOR_SELECTED_BG = ("gray70", "gray30")
 
 class App(ctk.CTk):
     def __init__(self):
@@ -24,6 +26,7 @@ class App(ctk.CTk):
         self.lon = 0.0
         self.raio = 0.0
         self.selected_recipient = None
+        self.selected_contact_frame = None
 
         self.title("Comunicador Geográfico - Login")
         self.geometry("400x450")
@@ -108,17 +111,26 @@ class App(ctk.CTk):
         color = COLOR_ONLINE if status == 'ONLINE' else COLOR_OFFLINE
         item_frame = ctk.CTkFrame(parent_frame, fg_color="transparent", corner_radius=5)
         item_frame.pack(fill="x", padx=5, pady=3)
-        dot_label = ctk.CTkLabel(item_frame, text="●", text_color=color, font=ctk.CTkFont(size=18))
-        dot_label.pack(side="left", padx=(0, 5))
-        name_label = ctk.CTkLabel(item_frame, text=username, anchor="w")
-        name_label.pack(side="left", fill="x", expand=True)
-        item_frame.bind("<Button-1>", lambda event, u=username: self._select_recipient(u))
-        dot_label.bind("<Button-1>", lambda event, u=username: self._select_recipient(u))
-        name_label.bind("<Button-1>", lambda event, u=username: self._select_recipient(u))
 
-    def _select_recipient(self, username):
+        dot_label = ctk.CTkLabel(item_frame, text="●", text_color=color, font=ctk.CTkFont(size=18), fg_color="transparent")
+        dot_label.pack(side="left", padx=(0, 5))
+
+        name_label = ctk.CTkLabel(item_frame, text=username, anchor="w", fg_color="transparent")
+        name_label.pack(side="left", fill="x", expand=True)
+
+        item_frame.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
+        dot_label.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
+        name_label.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
+
+    def _select_recipient(self, username, frame):
+        if self.selected_contact_frame is not None:
+            self.selected_contact_frame.configure(fg_color="transparent")
+        
+        frame.configure(fg_color=COLOR_SELECTED_BG)
+        self.selected_contact_frame = frame
+    
         self.selected_recipient = username
-        self.recipient_label.configure(text=f"Enviando para: {self.selected_recipient}", text_color="cyan")
+        self.recipient_label.configure(text=f"Enviando para: {self.selected_recipient}", text_color=COLOR_SELECTED_TEXT)
 
     def add_log(self, message):
         self.log_textbox.configure(state="normal")
@@ -147,14 +159,15 @@ class App(ctk.CTk):
             self.add_log(f"[ERRO] Falha ao buscar lista de usuários: {e}")
             return
         
+        self.selected_recipient = None
+        self.selected_contact_frame = None
+        self.recipient_label.configure(text="Selecione um contato para enviar mensagem", text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"])
+
         list_of_widgets = list(self.contacts_frame.winfo_children())
         for widget in list_of_widgets:
             widget.destroy()
 
-        online_in_radius = {}
-        online_out_of_radius = {}
-        offline_users = {}
-
+        online_in_radius, online_out_of_radius, offline_users = {}, {}, {}
         for user, data in all_users_data.items():
             if user == self.username:
                 continue
