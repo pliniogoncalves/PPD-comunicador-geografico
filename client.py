@@ -27,6 +27,7 @@ class App(ctk.CTk):
         self.raio = 0.0
         self.selected_recipient = None
         self.selected_contact_frame = None
+        self.is_online = True
 
         self.title("Comunicador Geográfico - Login")
         self.geometry("400x450")
@@ -117,6 +118,10 @@ class App(ctk.CTk):
 
         ctk.CTkButton(profile_frame, text="Atualizar Perfil", command=self._update_profile).pack(fill="x", padx=10, pady=(0,10))
 
+        self.status_switch = ctk.CTkSwitch(profile_frame, text="Status Online", command=self._toggle_status)
+        self.status_switch.pack(fill="x", padx=10, pady=10)
+        self.status_switch.select()
+
         right_frame = ctk.CTkFrame(self)
         right_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
         right_frame.grid_rowconfigure(0, weight=1)
@@ -137,18 +142,14 @@ class App(ctk.CTk):
         item_frame = ctk.CTkFrame(parent_frame, fg_color="transparent", corner_radius=5)
         item_frame.pack(fill="x", padx=5, pady=3)
         item_frame.grid_columnconfigure(1, weight=1)
-
         dot_label = ctk.CTkLabel(item_frame, text="●", text_color=color, font=ctk.CTkFont(size=18), fg_color="transparent")
         dot_label.grid(row=0, column=0, sticky="w")
-
         name_label = ctk.CTkLabel(item_frame, text=username, anchor="w", fg_color="transparent")
         name_label.grid(row=0, column=1, sticky="w", padx=5)
-
         if distance is not None:
             dist_label = ctk.CTkLabel(item_frame, text=f"({distance:.2f} km)", anchor="e", font=ctk.CTkFont(size=10), text_color="gray", fg_color="transparent")
             dist_label.grid(row=0, column=2, sticky="e", padx=5)
             dist_label.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
-
         item_frame.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
         dot_label.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
         name_label.bind("<Button-1>", lambda event, u=username, f=item_frame: self._select_recipient(u, f))
@@ -161,6 +162,21 @@ class App(ctk.CTk):
         self.selected_recipient = username
         self.recipient_label.configure(text=f"Enviando para: {self.selected_recipient}", text_color=COLOR_SELECTED_TEXT)
 
+    def _toggle_status(self):
+        self.is_online = not self.is_online
+        new_status = 'ONLINE' if self.is_online else 'OFFLINE'
+        try:
+            self.rpc_proxy.atualizar_status(self.username, new_status)
+            self.mqtt_client.publish(MQTT_TOPIC_PRESENCE, f"{self.username}:{new_status}", retain=True)
+            log_msg = "ONLINE" if self.is_online else "OFFLINE (Invisível)"
+            self.add_log(f"[SISTEMA] Seu status foi alterado para {log_msg}.")
+        except Exception as e:
+            self.add_log(f"[ERRO] Falha ao atualizar status: {e}")
+            if self.is_online: self.status_switch.select()
+            else: self.status_switch.deselect()
+            self.is_online = not self.is_online
+
+
     def _update_profile(self):
         new_lat_str = self.lat_entry_edit.get()
         new_lon_str = self.lon_entry_edit.get()
@@ -172,9 +188,7 @@ class App(ctk.CTk):
         except ValueError:
             self.add_log("[ERRO] Falha ao atualizar perfil: valores devem ser numéricos.")
             return
-
         self.lat, self.lon, self.raio = new_lat, new_lon, new_raio
-
         try:
             self.rpc_proxy.atualizar_localizacao(self.username, self.lat, self.lon)
             self.rpc_proxy.atualizar_raio(self.username, self.raio)
@@ -210,7 +224,7 @@ class App(ctk.CTk):
             self.add_log(f"[ERRO] Falha ao buscar lista de usuários: {e}")
             return
         
-        if self.selected_recipient not in all_users_data or all_users_data[self.selected_recipient]['status'] == 'OFFLINE':
+        if self.selected_recipient not in all_users_data or all_users_data.get(self.selected_recipient, {}).get('status') == 'OFFLINE':
             self.selected_recipient = None
             self.selected_contact_frame = None
             self.recipient_label.configure(text="Selecione um contato para enviar mensagem", text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"])
@@ -324,6 +338,7 @@ class App(ctk.CTk):
             def cleanup_thread():
                 try:
                     if self.mqtt_client:
+                        self.mqtt_client.publish(MQTT_TOPIC_PRESENCE, f"{self.username}:OFFLINE", retain=True)
                         self.mqtt_client.disconnect()
                     self.rpc_proxy.atualizar_status(self.username, 'OFFLINE')
                     print(f"Limpeza em background para '{self.username}' concluída.")
