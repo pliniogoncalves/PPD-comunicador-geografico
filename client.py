@@ -11,6 +11,7 @@ MQTT_BROKER = 'broker.hivemq.com'
 MQTT_PORT = 1883
 MQTT_TOPIC_PRESENCE = 'ppd/projeto/presenca'
 MQTT_TOPIC_MSG_BASE = 'ppd/projeto/mensagens'
+MQTT_TOPIC_LOCATION_UPDATES = 'ppd/projeto/location_updates'
 
 COLOR_ERROR = "#C21807"
 COLOR_ONLINE = "#1F6AA5"
@@ -30,6 +31,7 @@ class App(ctk.CTk):
         self.is_online = True
         self.default_switch_progress_color = None
         self.default_switch_fg_color = None
+        self.message_buffer = []
 
         self.title("Comunicador Geográfico - Login")
         self.geometry("400x450")
@@ -159,12 +161,15 @@ class App(ctk.CTk):
 
     def _select_recipient(self, username, frame):
         if self.selected_contact_frame is not None:
-            self.selected_contact_frame.configure(fg_color="transparent")
+            try:
+                self.selected_contact_frame.configure(fg_color="transparent")
+            except ctk.TclError:
+                pass
         frame.configure(fg_color=COLOR_SELECTED_BG)
         self.selected_contact_frame = frame
         self.selected_recipient = username
         self.recipient_label.configure(text=f"Enviando para: {self.selected_recipient}", text_color=COLOR_SELECTED_TEXT)
-        
+
     def _toggle_status(self):
         self.is_online = not self.is_online
         new_status = 'ONLINE' if self.is_online else 'OFFLINE'
@@ -177,8 +182,17 @@ class App(ctk.CTk):
         try:
             self.rpc_proxy.atualizar_status(self.username, new_status)
             self.mqtt_client.publish(MQTT_TOPIC_PRESENCE, f"{self.username}:{new_status}", retain=True)
-            log_msg = "ONLINE" if self.is_online else "OFFLINE (Invisível)"
-            self.add_log(f"[SISTEMA] Seu status foi alterado para {log_msg}.")
+
+            if self.is_online:
+                self.add_log("[SISTEMA] Seu status foi alterado para ONLINE.")
+                self.add_log(f"[SISTEMA] Exibindo {len(self.message_buffer)} mensagens recebidas...")
+                for msg in self.message_buffer:
+                    self.add_log(f"[MSG ASSÍNCRONA] {msg}")
+                self.message_buffer.clear()
+            else:
+                self.add_log("[SISTEMA] Seu status foi alterado para OFFLINE (Invisível).")
+                self.add_log("[SISTEMA] Você não receberá novas mensagens até ficar online.")
+            
         except Exception as e:
             self.add_log(f"[ERRO] Falha ao atualizar status: {e}")
             self.is_online = not self.is_online
@@ -205,6 +219,8 @@ class App(ctk.CTk):
             self.rpc_proxy.atualizar_localizacao(self.username, self.lat, self.lon)
             self.rpc_proxy.atualizar_raio(self.username, self.raio)
             self.add_log("[SISTEMA] Perfil atualizado com sucesso no servidor.")
+            update_payload = f"{self.username}"
+            self.mqtt_client.publish(MQTT_TOPIC_LOCATION_UPDATES, update_payload)
             self._update_contacts_list()
         except Exception as e:
             self.add_log(f"[ERRO] Falha ao comunicar atualização ao servidor: {e}")
@@ -218,28 +234,34 @@ class App(ctk.CTk):
     def on_mqtt_message(self, client, userdata, message):
         topic = message.topic
         payload = message.payload.decode()
+        
         if topic == MQTT_TOPIC_PRESENCE:
-            try:
-                user, status = payload.split(':')
-                if user != self.username:
-                    self.rpc_proxy.atualizar_status(user, status)
-            except Exception as e:
-                self.add_log(f"[AVISO] Não foi possível processar a mensagem de presença: {e}")
             self.after(100, self._update_contacts_list)
+        
+        elif topic == MQTT_TOPIC_LOCATION_UPDATES:
+            updated_user = payload
+            if updated_user != self.username:
+                self.add_log(f"[SISTEMA] {updated_user} atualizou a localização. Atualizando lista...")
+                self.after(100, self._update_contacts_list)
+        
         elif topic == f"{MQTT_TOPIC_MSG_BASE}/{self.username}":
-            self.add_log(f"[MSG ASSÍNCRONA] {payload}")
+            if self.is_online:
+                self.add_log(f"[MSG ASSÍNCRONA] {payload}")
+            else:
+                self.message_buffer.append(payload)
 
     def _update_contacts_list(self):
+        if not hasattr(self, 'contacts_frame'): return
+        
+        self.selected_recipient = None
+        self.selected_contact_frame = None
+        self.recipient_label.configure(text="Selecione um contato para enviar mensagem", text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"])
+
         try:
             all_users_data = self.rpc_proxy.get_todos_usuarios()
         except Exception as e:
             self.add_log(f"[ERRO] Falha ao buscar lista de usuários: {e}")
             return
-        
-        if self.selected_recipient not in all_users_data or all_users_data.get(self.selected_recipient, {}).get('status') == 'OFFLINE':
-            self.selected_recipient = None
-            self.selected_contact_frame = None
-            self.recipient_label.configure(text="Selecione um contato para enviar mensagem", text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"])
 
         list_of_widgets = list(self.contacts_frame.winfo_children())
         for widget in list_of_widgets:
@@ -286,6 +308,7 @@ class App(ctk.CTk):
                 self.mqtt_client.publish(MQTT_TOPIC_PRESENCE, f"{self.username}:ONLINE", retain=True)
                 self.mqtt_client.subscribe(MQTT_TOPIC_PRESENCE)
                 self.mqtt_client.subscribe(self.personal_topic)
+                self.mqtt_client.subscribe(MQTT_TOPIC_LOCATION_UPDATES)
                 self.add_log("[MQTT] Conectado e status 'ONLINE' anunciado.")
             else:
                 self.create_login_widgets()
