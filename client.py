@@ -11,28 +11,91 @@ MQTT_BROKER = 'broker.hivemq.com'
 MQTT_PORT = 1883
 MQTT_TOPIC_PRESENCE = 'ppd/projeto/presenca'
 MQTT_TOPIC_MSG_BASE = 'ppd/projeto/mensagens'
+COLOR_ERROR = "#C21807"
 
 class App(ctk.CTk):
-    def __init__(self, username, lat, lon, raio):
+    def __init__(self):
         super().__init__()
-        self.username = username
-        self.lat = lat
-        self.lon = lon
-        self.raio = raio
-        self.title(f"Comunicador Geográfico - {self.username}")
-        self.geometry("700x500")
+
+        self.username = None
+        self.lat = 0.0
+        self.lon = 0.0
+        self.raio = 0.0
+
+        self.title("Comunicador Geográfico - Login")
+        self.geometry("400x450")
+
         self.rpc_proxy = xmlrpc.client.ServerProxy(RPC_URL, allow_none=True)
-        self.mqtt_client = MQTTHandler(MQTT_BROKER, 
-                                       MQTT_PORT, 
-                                       client_id=self.username,
-                                       on_message_callback=self.on_mqtt_message)
+        self.mqtt_client = None
         self.is_running = True
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.online_users = []
-        self.create_widgets()
+
+        self.create_login_widgets()
+
+    def create_login_widgets(self):
+        """Cria a interface gráfica para a tela de login."""
+        self.login_frame = ctk.CTkFrame(self)
+        self.login_frame.pack(padx=20, pady=20, fill="both", expand=True)
+
+        ctk.CTkLabel(self.login_frame, text="Conectar ao Sistema", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(0, 20))
+
+        ctk.CTkLabel(self.login_frame, text="Nome de Usuário").pack(anchor="w", padx=10)
+        self.username_entry_login = ctk.CTkEntry(self.login_frame, placeholder_text="Ex: Alice")
+        self.username_entry_login.pack(fill="x", padx=10, pady=(0, 10))
+
+        ctk.CTkLabel(self.login_frame, text="Latitude").pack(anchor="w", padx=10)
+        self.lat_entry_login = ctk.CTkEntry(self.login_frame, placeholder_text="Ex: -3.74")
+        self.lat_entry_login.pack(fill="x", padx=10, pady=(0, 10))
+
+        ctk.CTkLabel(self.login_frame, text="Longitude").pack(anchor="w", padx=10)
+        self.lon_entry_login = ctk.CTkEntry(self.login_frame, placeholder_text="Ex: -38.52")
+        self.lon_entry_login.pack(fill="x", padx=10, pady=(0, 10))
+
+        ctk.CTkLabel(self.login_frame, text="Raio de Comunicação (km)").pack(anchor="w", padx=10)
+        self.raio_entry_login = ctk.CTkEntry(self.login_frame, placeholder_text="Ex: 20")
+        self.raio_entry_login.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.login_button = ctk.CTkButton(self.login_frame, text="Conectar", command=self.login)
+        self.login_button.pack(fill="x", padx=10, pady=20)
+        
+        self.status_label_login = ctk.CTkLabel(self.login_frame, text="")
+        self.status_label_login.pack()
+
+    def login(self):
+        """Processa os dados de login, conecta e transita para a tela principal."""
+        self.username = self.username_entry_login.get().strip()
+        lat_str = self.lat_entry_login.get().strip()
+        lon_str = self.lon_entry_login.get().strip()
+        raio_str = self.raio_entry_login.get().strip()
+
+        if not all([self.username, lat_str, lon_str, raio_str]):
+            self.status_label_login.configure(text="Todos os campos são obrigatórios.", text_color=COLOR_ERROR)
+            return
+
+        try:
+            self.lat = float(lat_str)
+            self.lon = float(lon_str)
+            self.raio = float(raio_str)
+        except ValueError:
+            self.status_label_login.configure(text="Latitude, Longitude e Raio devem ser números.", text_color=COLOR_ERROR)
+            return
+
+        self.login_button.configure(state="disabled", text="Conectando...")
+        self.status_label_login.configure(text="")
+        
+        self.mqtt_client = MQTTHandler(MQTT_BROKER,
+                                       MQTT_PORT,
+                                       client_id=self.username,
+                                       on_message_callback=self.on_mqtt_message)
+        
+        self.login_frame.destroy()
+        self.title(f"Comunicador Geográfico - {self.username}")
+        self.geometry("700x500")
+        
         self.initialize_connections()
 
-    def create_widgets(self):
+    def setup_main_ui(self):
+        """Cria os widgets da tela principal de chat."""
         top_frame = ctk.CTkFrame(self)
         top_frame.pack(padx=10, pady=10, fill="x")
         self.user_combobox = ctk.CTkComboBox(top_frame, values=["Ninguém online"], state="readonly")
@@ -44,6 +107,7 @@ class App(ctk.CTk):
         self.send_button.pack(side="left")
         self.log_textbox = ctk.CTkTextbox(self, state="disabled", wrap="word")
         self.log_textbox.pack(padx=10, pady=(0, 10), fill="both", expand=True)
+        self.update_online_users()
 
     def add_log(self, message):
         self.log_textbox.configure(state="normal")
@@ -101,30 +165,36 @@ class App(ctk.CTk):
     def initialize_connections(self):
         try:
             self.rpc_proxy.registrar_usuario(self.username, self.lat, self.lon, self.raio)
-            self.add_log(f"[RPC] Usuário '{self.username}' registrado.")
             
             self.rpc_proxy.atualizar_status(self.username, 'ONLINE')
-            self.add_log("[RPC] Status atualizado para ONLINE no servidor.")
             
             self.personal_topic = f"{MQTT_TOPIC_MSG_BASE}/{self.username}"
             will_payload = f"{self.username}:OFFLINE"
             connected = self.mqtt_client.connect(will_topic=MQTT_TOPIC_PRESENCE, will_payload=will_payload)
             
             if connected:
+                self.setup_main_ui()
+                self.add_log(f"[RPC] Usuário '{self.username}' registrado.")
+                self.add_log("[RPC] Status atualizado para ONLINE no servidor.")
+                self.add_log("Bem-vindo! Conexões estabelecidas.")
+
                 self.mqtt_client.publish(MQTT_TOPIC_PRESENCE, f"{self.username}:ONLINE", retain=True)
                 self.mqtt_client.subscribe(MQTT_TOPIC_PRESENCE)
                 self.mqtt_client.subscribe(self.personal_topic)
                 self.add_log("[MQTT] Conectado e status 'ONLINE' anunciado.")
-                self.update_online_users()
             else:
-                self.add_log("[ERRO] Falha na conexão MQTT.")
+                self.status_label_login.configure(text="Falha ao conectar ao Broker MQTT.", text_color=COLOR_ERROR)
+                self.login_button.configure(state="normal", text="Conectar")
                 return
 
             self.rpc_polling_thread = threading.Thread(target=self.poll_rpc_messages, daemon=True)
             self.rpc_polling_thread.start()
         except Exception as e:
-            self.add_log(f"[ERRO GERAL] {e}")
-
+            self.create_login_widgets()
+            self.status_label_login.configure(text=f"Erro de conexão RPC.", text_color=COLOR_ERROR)
+            print(f"Erro detalhado: {e}")
+            self.login_button.configure(state="normal", text="Tentar Novamente")
+            
 
     def poll_rpc_messages(self):
         while self.is_running:
@@ -175,33 +245,22 @@ class App(ctk.CTk):
             self.add_log(f"[ERRO AO ENVIAR] {e}")
     
     def on_closing(self):
-        self.is_running = False
-        self.add_log("[SISTEMA] Encerrando...")
+        if self.username:
+            self.is_running = False
+            self.add_log("[SISTEMA] Encerrando...")
 
-        def cleanup_thread():
-            try:
-                self.mqtt_client.disconnect()
-                self.rpc_proxy.atualizar_status(self.username, 'OFFLINE')
-                print(f"Limpeza em background para '{self.username}' concluída.")
-            except Exception as e:
-                print(f"Erro durante a limpeza em background: {e}")
+            def cleanup_thread():
+                try:
+                    if self.mqtt_client:
+                        self.mqtt_client.disconnect()
+                    self.rpc_proxy.atualizar_status(self.username, 'OFFLINE')
+                    print(f"Limpeza em background para '{self.username}' concluída.")
+                except Exception as e:
+                    print(f"Erro durante a limpeza em background: {e}")
 
-        threading.Thread(target=cleanup_thread, daemon=True).start()
+            threading.Thread(target=cleanup_thread, daemon=True).start()
         self.destroy()
 
 if __name__ == "__main__":
-    import sys
-    if len(sys.argv) > 1:
-        username = sys.argv[1]
-        if username == "Alice":
-            lat, lon, raio = -3.74, -38.52, 20.0
-        elif username == "Beto":
-            lat, lon, raio = -3.85, -38.62, 10.0
-        else:
-            username = "Carlos"
-            lat, lon, raio = -23.55, -46.63, 10.0
-        app = App(username, lat, lon, raio)
-        app.mainloop()
-    else:
-        print("Uso: python client.py <nome_de_usuario>")
-        print("Exemplos: python client.py Alice | python client.py Beto | python client.py Carlos")
+    app = App()
+    app.mainloop()
