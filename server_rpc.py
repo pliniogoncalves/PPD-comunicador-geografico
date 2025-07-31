@@ -28,6 +28,7 @@ class LocationServer:
         with self.lock:
             if nome not in self.usuarios: return False
             self.usuarios[nome]['lat'] = float(lat)
+            self.usuarios[nome]['lon'] = float(lon)
             print(f"Localização de '{nome}' atualizada.")
             return True
 
