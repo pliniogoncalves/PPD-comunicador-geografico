@@ -373,17 +373,25 @@ class App(ctk.CTk):
     def on_closing(self):
         if self.username:
             self.is_running = False
+            
+            self.withdraw() 
+
             def cleanup_thread():
                 try:
+                    self.rpc_proxy.atualizar_status(self.username, 'OFFLINE')
                     if self.mqtt_client:
                         self.mqtt_client.publish(MQTT_TOPIC_PRESENCE, f"{self.username}:OFFLINE", retain=True)
+                        time.sleep(0.1)
                         self.mqtt_client.disconnect()
-                    self.rpc_proxy.atualizar_status(self.username, 'OFFLINE')
                     print(f"Limpeza em background para '{self.username}' concluída.")
                 except Exception as e:
                     print(f"Erro durante a limpeza em background: {e}")
+                finally:
+                    self.after(0, self.destroy)
+
             threading.Thread(target=cleanup_thread, daemon=True).start()
-        self.destroy()
+        else:
+            self.destroy()
 
 if __name__ == "__main__":
     app = App()
